@@ -23,15 +23,32 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.3'
           channel: 'stable'
           cache: true
+
+      - name: Setup Android Scaffolding and Permissions
+        run: |
+          cp pubspec.yaml pubspec.yaml.bak
+          rm -rf android
+          flutter create . --org com.medo --project-name memory_palace_medo
+          cp pubspec.yaml.bak pubspec.yaml
+          python3 -c "
+          path = 'android/app/src/main/AndroidManifest.xml'
+          with open(path, 'r', encoding='utf-8') as f:
+              content = f.read()
+          perms = '''    <uses-permission android:name=\"android.permission.INTERNET\"/>\n    <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" android:maxSdkVersion=\"32\" />\n    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" android:maxSdkVersion=\"29\" />\n    <uses-permission android:name=\"android.permission.READ_MEDIA_VIDEO\" />\n    <uses-permission android:name=\"android.permission.READ_MEDIA_IMAGES\" />\n    <uses-permission android:name=\"android.permission.CAMERA\" />\n'''
+          if '<uses-permission' not in content:
+              content = content.replace('<application', perms + '    <application')
+              with open(path, 'w', encoding='utf-8') as f:
+                  f.write(content)
+          print('Permissions injected successfully')
+          "
 
       - name: Install Dependencies
         run: flutter pub get
 
       - name: Build Android APK
-        run: flutter build apk --release
+        run: flutter build apk --release --no-tree-shake-icons
 
       - name: Upload APK as Artifact
         uses: actions/upload-artifact@v4

@@ -26,10 +26,12 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Create Android Platform
+      - name: Generate Clean Android Scaffolding
         run: |
           rm -rf android
-          flutter create --platforms=android --org=com.medo --project-name=memory_palace_medo .
+          flutter create --org com.medo memory_palace_medo
+          cp -r memory_palace_medo/android .
+          rm -rf memory_palace_medo
           python3 scripts/setup_android.py
 
       - name: Install Dependencies

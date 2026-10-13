@@ -26,23 +26,11 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Setup Android Scaffolding and Permissions
+      - name: Create Android Platform
         run: |
-          cp pubspec.yaml pubspec.yaml.bak
           rm -rf android
-          flutter create . --org com.medo --project-name memory_palace_medo
-          cp pubspec.yaml.bak pubspec.yaml
-          python3 -c "
-          path = 'android/app/src/main/AndroidManifest.xml'
-          with open(path, 'r', encoding='utf-8') as f:
-              content = f.read()
-          perms = '''    <uses-permission android:name=\"android.permission.INTERNET\"/>\n    <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" android:maxSdkVersion=\"32\" />\n    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" android:maxSdkVersion=\"29\" />\n    <uses-permission android:name=\"android.permission.READ_MEDIA_VIDEO\" />\n    <uses-permission android:name=\"android.permission.READ_MEDIA_IMAGES\" />\n    <uses-permission android:name=\"android.permission.CAMERA\" />\n'''
-          if '<uses-permission' not in content:
-              content = content.replace('<application', perms + '    <application')
-              with open(path, 'w', encoding='utf-8') as f:
-                  f.write(content)
-          print('Permissions injected successfully')
-          "
+          flutter create --platforms=android --org=com.medo --project-name=memory_palace_medo .
+          python3 scripts/setup_android.py
 
       - name: Install Dependencies
         run: flutter pub get

@@ -9,34 +9,35 @@ void main() {
 }
 
 class MemoryPalaceMedoApp extends StatelessWidget {
-  const MemoryPalaceMedoApp({Key? key}) : super(key: key);
+  const MemoryPalaceMedoApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'ميموري بالاس ميدو',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        primarySwatch: Colors.indigo,
-        primaryColor: Colors.indigo,
-        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
-        textTheme: GoogleFonts.cairoTextTheme(Theme.of(context).textTheme),
-        appBarTheme: const AppBarTheme(
-          elevation: 0,
-          centerTitle: true,
-        ),
-      ),
+      locale: const Locale('ar'),
+      supportedLocales: const [
+        Locale('ar'),
+        Locale('en'),
+      ],
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      supportedLocales: const [
-        Locale('ar', 'AE'),
-        Locale('en', 'US'),
-      ],
-      locale: const Locale('ar', 'AE'),
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF1E3A8A),
+          brightness: Brightness.light,
+        ),
+        textTheme: GoogleFonts.cairoTextTheme(ThemeData.light().textTheme),
+        appBarTheme: const AppBarTheme(
+          centerTitle: true,
+          elevation: 0,
+        ),
+      ),
       home: const HomeScreen(),
     );
   }

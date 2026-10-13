@@ -9,15 +9,16 @@ import 'editor_screen.dart';
 import 'walkthrough_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({Key? key}) : super(key: key);
+  const HomeScreen({super.key});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final DatabaseService _db = DatabaseService();
+  final DatabaseService _db = DatabaseService.instance;
   List<Palace> _palaces = [];
+  Map<String, int> _stationCounts = {};
   bool _isLoading = true;
 
   @override
@@ -29,95 +30,91 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadPalaces() async {
     setState(() => _isLoading = true);
     final list = await _db.getPalaces();
+    final counts = <String, int>{};
+    for (final p in list) {
+      counts[p.id] = await _db.getStationCount(p.id);
+    }
     setState(() {
       _palaces = list;
+      _stationCounts = counts;
       _isLoading = false;
     });
   }
 
-  Future<void> _createPalaceDialog() async {
+  Future<void> _showCreatePalaceDialog() async {
     final nameController = TextEditingController();
     final descController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
 
     await showDialog(
       context: context,
-      builder: (ctx) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Row(
-            children: [
-              Icon(Icons.castle_rounded, color: Colors.indigo),
-              SizedBox(width: 8),
-              Text('إنشاء قصر ذاكرة جديد'),
-            ],
-          ),
-          content: Column(
+      builder: (context) => AlertDialog(
+        title: const Text('قصر ذاكرة جديد'),
+        content: Form(
+          key: formKey,
+          child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(
+              TextFormField(
                 controller: nameController,
                 decoration: const InputDecoration(
                   labelText: 'اسم القصر',
-                  hintText: 'مثال: قصر التاريخ - الغرفة الأولى',
-                  border: OutlineInputBorder(),
+                  hintText: 'مثال: تاريخ الطب - الفصل الأول',
                 ),
+                validator: (val) =>
+                    (val == null || val.trim().isEmpty) ? 'الاسم مطلوب' : null,
               ),
               const SizedBox(height: 12),
-              TextField(
+              TextFormField(
                 controller: descController,
-                maxLines: 2,
                 decoration: const InputDecoration(
-                  labelText: 'وصف أو ملاحظات (اختياري)',
-                  hintText: 'ما هي المعلومات المحفوظة هنا؟',
-                  border: OutlineInputBorder(),
+                  labelText: 'الوصف (اختياري)',
                 ),
+                maxLines: 2,
               ),
             ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('إلغاء'),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.indigo,
-                foregroundColor: Colors.white,
-              ),
-              onPressed: () async {
-                final name = nameController.text.trim();
-                if (name.isEmpty) return;
-
-                Navigator.pop(ctx);
-                _pickAndSaveVideo(name, descController.text.trim());
-              },
-              child: const Text('اختيار الفيديو ومتابعة'),
-            ),
-          ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              if (!formKey.currentState!.validate()) return;
+              Navigator.pop(context);
+              await _pickVideoAndCreate(
+                nameController.text.trim(),
+                descController.text.trim(),
+              );
+            },
+            child: const Text('اختيار فيديو'),
+          ),
+        ],
       ),
     );
   }
 
-  Future<void> _pickAndSaveVideo(String name, String description) async {
+  Future<void> _pickVideoAndCreate(String name, String description) async {
     final picker = ImagePicker();
-    final XFile? video = await picker.pickVideo(source: ImageSource.gallery);
+    final picked = await picker.pickVideo(source: ImageSource.gallery);
+    if (picked == null) return;
 
-    if (video == null) return;
-
-    // حل مشكلة اختفاء الفيديو: نسخه للمجلد الداخلي الخاص بالتطبيق
     final appDir = await getApplicationDocumentsDirectory();
-    final videoId = Uuid().v4();
-    final targetPath = '${appDir.path}/palace_video_$videoId.mp4';
-    final savedVideo = await File(video.path).copy(targetPath);
+    final id = Uuid().v4();
+    final targetDir = Directory('${appDir.path}/palace_videos');
+    if (!await targetDir.exists()) {
+      await targetDir.create(recursive: true);
+    }
+    final targetPath = '${targetDir.path}/palace_$id.mp4';
+    await File(picked.path).copy(targetPath);
 
     final palace = Palace(
-      id: videoId,
+      id: id,
       name: name,
       description: description,
-      videoPath: savedVideo.path,
+      videoPath: targetPath,
       createdAt: DateTime.now().toIso8601String(),
     );
 
@@ -127,40 +124,143 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) {
       Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (_) => EditorScreen(palace: palace),
-        ),
+        MaterialPageRoute(builder: (_) => EditorScreen(palace: palace)),
       ).then((_) => _loadPalaces());
+    }
+  }
+
+  Future<void> _confirmDelete(Palace palace) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('تأكيد الحذف'),
+        content: Text('هل أنت متأكد من حذف قصر "${palace.name}" وجميع محطاته؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        final f = File(palace.videoPath);
+        if (await f.exists()) await f.delete();
+      } catch (_) {}
+      await _db.deletePalace(palace.id);
+      await _loadPalaces();
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text(
-            'ميموري بالاس ميدو',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          backgroundColor: Colors.indigo,
-          foregroundColor: Colors.white,
-          centerTitle: true,
-          elevation: 2,
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'ميموري بالاس ميدو',
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
-        body: _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : _palaces.isEmpty
-                ? _buildEmptyState()
-                : _buildPalacesList(),
-        floatingActionButton: FloatingActionButton.extended(
-          onPressed: _createPalaceDialog,
-          backgroundColor: Colors.indigo,
-          foregroundColor: Colors.white,
-          icon: const Icon(Icons.video_call_rounded),
-          label: const Text('قصر جديد بالفيديو'),
-        ),
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _palaces.isEmpty
+              ? _buildEmptyState()
+              : ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: _palaces.length,
+                  itemBuilder: (context, index) {
+                    final p = _palaces[index];
+                    final count = _stationCounts[p.id] ?? 0;
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    p.name,
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                Badge(
+                                  label: Text('$count محطة'),
+                                  backgroundColor:
+                                      Theme.of(context).colorScheme.primary,
+                                ),
+                              ],
+                            ),
+                            if (p.description.isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                p.description,
+                                style: TextStyle(color: Colors.grey[700]),
+                              ),
+                            ],
+                            const SizedBox(height: 12),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline),
+                                  color: Theme.of(context).colorScheme.error,
+                                  onPressed: () => _confirmDelete(p),
+                                ),
+                                const SizedBox(width: 8),
+                                OutlinedButton.icon(
+                                  icon: const Icon(Icons.edit),
+                                  label: const Text('المحطات'),
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) =>
+                                            EditorScreen(palace: p),
+                                      ),
+                                    ).then((_) => _loadPalaces());
+                                  },
+                                ),
+                                const SizedBox(width: 8),
+                                FilledButton.icon(
+                                  icon: const Icon(Icons.play_arrow),
+                                  label: const Text('استذكار'),
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) =>
+                                            WalkthroughScreen(palace: p),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _showCreatePalaceDialog,
+        icon: const Icon(Icons.add),
+        label: const Text('قصر جديد'),
       ),
     );
   }
@@ -168,155 +268,25 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildEmptyState() {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24.0),
+        padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.indigo.withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.account_balance_rounded,
-                size: 80,
-                color: Colors.indigo,
-              ),
+            Icon(
+              Icons.video_library_outlined,
+              size: 80,
+              color: Colors.grey[400],
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
             const Text(
-              'أهلاً بك في ميموري بالاس ميدو',
+              'لا توجد قصور ذاكرة بعد',
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'لا توجد قصور ذاكرة حتى الآن.\nاضغط على الزر بالأسفل لاختيار فيديو من هاتفك وبناء قصرك الأول!',
+            Text(
+              'اضغط على زر "قصر جديد" لاختيار فيديو والبدء في ربط المحطات والمعلومات.',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14, color: Colors.black54),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPalacesList() {
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      itemCount: _palaces.length,
-      itemBuilder: (context, index) {
-        final palace = _palaces[index];
-        return Card(
-          elevation: 3,
-          margin: const EdgeInsets.only(bottom: 14),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        palace.name,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.indigo,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline, color: Colors.red),
-                      onPressed: () => _confirmDelete(palace),
-                    ),
-                  ],
-                ),
-                if (palace.description.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    palace.description,
-                    style: const TextStyle(fontSize: 13, color: Colors.black87),
-                  ),
-                ],
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        icon: const Icon(Icons.play_circle_fill, size: 20),
-                        label: const Text('بدء الاستذكار'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.indigo,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => WalkthroughScreen(palace: palace),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.edit_location_alt, size: 20),
-                      label: const Text('تعديل المحطات'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.indigo,
-                        side: const BorderSide(color: Colors.indigo),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => EditorScreen(palace: palace),
-                          ),
-                        ).then((_) => _loadPalaces());
-                      },
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  void _confirmDelete(Palace palace) {
-    showDialog(
-      context: context,
-      builder: (ctx) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          title: const Text('تأكيد الحذف'),
-          content: Text('هل أنت متأكد من حذف قصر "${palace.name}" وجميع محطاته؟'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('إلغاء'),
-            ),
-            TextButton(
-              onPressed: () async {
-                Navigator.pop(ctx);
-                await _db.deletePalace(palace.id);
-                _loadPalaces();
-              },
-              child: const Text('حذف', style: TextStyle(color: Colors.red)),
+              style: TextStyle(color: Colors.grey[600]),
             ),
           ],
         ),

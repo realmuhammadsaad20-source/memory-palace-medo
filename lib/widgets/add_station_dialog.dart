@@ -7,131 +7,75 @@ class AddStationDialog extends StatefulWidget {
   final int timestampMs;
   final double xRatio;
   final double yRatio;
-  final Station? initialStation;
 
   const AddStationDialog({
-    Key? key,
+    super.key,
     required this.palaceId,
     required this.timestampMs,
     required this.xRatio,
     required this.yRatio,
-    this.initialStation,
-  }) : super(key: key);
+  });
 
   @override
   State<AddStationDialog> createState() => _AddStationDialogState();
 }
 
 class _AddStationDialogState extends State<AddStationDialog> {
-  late TextEditingController _titleController;
-  late TextEditingController _noteController;
-  late TextEditingController _linkController;
-  late int _selectedColor;
+  final _formKey = GlobalKey<FormState>();
+  final _titleController = TextEditingController();
+  final _noteController = TextEditingController();
+  final _linkController = TextEditingController();
 
-  final List<int> _colors = [
-    0xFF3B82F6, // أزرق
-    0xFF10B981, // أخضر
-    0xFFEF4444, // أحمر
-    0xFFF59E0B, // كهرماني
-    0xFF8B5CF6, // بنفسجي
+  static const List<int> _colors = [
+    0xFFE53935, // أحمر
+    0xFF1E88E5, // أزرق
+    0xFF43A047, // أخضر
+    0xFFFB8C00, // برتقالي
+    0xFF8E24AA, // بنفسجي
   ];
 
-  @override
-  void initState() {
-    super.initState();
-    _titleController =
-        TextEditingController(text: widget.initialStation?.title ?? '');
-    _noteController =
-        TextEditingController(text: widget.initialStation?.note ?? '');
-    _linkController =
-        TextEditingController(text: widget.initialStation?.linkUrl ?? '');
-    _selectedColor = widget.initialStation?.colorValue ?? _colors.first;
-  }
-
-  @override
-  void dispose() {
-    _titleController.dispose();
-    _noteController.dispose();
-    _linkController.dispose();
-    super.dispose();
-  }
+  int _selectedColor = _colors[0];
 
   @override
   Widget build(BuildContext context) {
     final seconds = (widget.timestampMs / 1000).toStringAsFixed(1);
 
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            const Icon(Icons.add_location_alt_rounded, color: Colors.indigo),
-            const SizedBox(width: 8),
-            Text(widget.initialStation == null
-                ? 'إضافة محطة عند ($seconds ث)'
-                : 'تعديل المحطة'),
-          ],
-        ),
-        content: SingleChildScrollView(
+    return AlertDialog(
+      title: Text('إضافة محطة ($seconds ث)'),
+      content: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              TextField(
+              TextFormField(
                 controller: _titleController,
-                decoration: const InputDecoration(
-                  labelText: 'عنوان المعلومة / الكلمة المفتاحية',
-                  hintText: 'مثال: تاريخ معركة حطين',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.title),
-                ),
+                decoration: const InputDecoration(labelText: 'العنوان / المفهوم'),
+                validator: (val) =>
+                    (val == null || val.trim().isEmpty) ? 'العنوان مطلوب' : null,
               ),
               const SizedBox(height: 12),
-              TextField(
+              TextFormField(
                 controller: _noteController,
+                decoration: const InputDecoration(labelText: 'ملاحظات وتفاصيل'),
                 maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'الملاحظة / التفاصيل الكاملة',
-                  hintText: 'اكتب الشرح أو ما تريد تذكره هنا...',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.notes),
-                ),
               ),
               const SizedBox(height: 12),
-              TextField(
+              TextFormField(
                 controller: _linkController,
-                decoration: const InputDecoration(
-                  labelText: 'رابط خارجي (اختياري)',
-                  hintText: 'https://...',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.link),
-                ),
+                decoration: const InputDecoration(labelText: 'رابط خارجي (اختياري)'),
               ),
               const SizedBox(height: 16),
-              const Text(
-                'اختر لون علامة المحطة:',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: _colors.map((c) {
-                  final isSelected = c == _selectedColor;
                   return GestureDetector(
                     onTap: () => setState(() => _selectedColor = c),
-                    child: Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: Color(c),
-                        shape: BoxShape.circle,
-                        border: isSelected
-                            ? Border.all(color: Colors.black, width: 3)
-                            : null,
-                      ),
-                      child: isSelected
-                          ? const Icon(Icons.check, color: Colors.white, size: 20)
+                    child: CircleAvatar(
+                      backgroundColor: Color(c),
+                      radius: 16,
+                      child: _selectedColor == c
+                          ? const Icon(Icons.check, color: Colors.white, size: 16)
                           : null,
                     ),
                   );
@@ -140,44 +84,33 @@ class _AddStationDialogState extends State<AddStationDialog> {
             ],
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('إلغاء'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.indigo,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () {
-              if (_titleController.text.trim().isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('يرجى كتابة عنوان للمحطة')),
-                );
-                return;
-              }
-
-              final station = Station(
-                id: widget.initialStation?.id ?? Uuid().v4(),
-                palaceId: widget.palaceId,
-                title: _titleController.text.trim(),
-                note: _noteController.text.trim(),
-                timestampMs: widget.timestampMs,
-                xRatio: widget.xRatio,
-                yRatio: widget.yRatio,
-                colorValue: _selectedColor,
-                linkUrl: _linkController.text.trim().isEmpty
-                    ? null
-                    : _linkController.text.trim(),
-              );
-
-              Navigator.pop(context, station);
-            },
-            child: const Text('حفظ المحطة'),
-          ),
-        ],
       ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('إلغاء'),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (!_formKey.currentState!.validate()) return;
+            final station = Station(
+              id: Uuid().v4(),
+              palaceId: widget.palaceId,
+              title: _titleController.text.trim(),
+              note: _noteController.text.trim(),
+              timestampMs: widget.timestampMs,
+              xRatio: widget.xRatio,
+              yRatio: widget.yRatio,
+              colorValue: _selectedColor,
+              linkUrl: _linkController.text.trim().isEmpty
+                  ? null
+                  : _linkController.text.trim(),
+            );
+            Navigator.pop(context, station);
+          },
+          child: const Text('حفظ'),
+        ),
+      ],
     );
   }
 }

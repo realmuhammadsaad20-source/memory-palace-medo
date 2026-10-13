@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import '../models/palace.dart';
@@ -9,261 +10,172 @@ import '../widgets/video_overlay.dart';
 class EditorScreen extends StatefulWidget {
   final Palace palace;
 
-  const EditorScreen({Key? key, required this.palace}) : super(key: key);
+  const EditorScreen({super.key, required this.palace});
 
   @override
   State<EditorScreen> createState() => _EditorScreenState();
 }
 
 class _EditorScreenState extends State<EditorScreen> {
-  final DatabaseService _db = DatabaseService();
+  final DatabaseService _db = DatabaseService.instance;
+  late VideoPlayerController _controller;
   List<Station> _stations = [];
-  VideoPlayerController? _controller;
-  bool _isPlaying = false;
-  double _sliderValue = 0.0;
-  bool _isLoading = true;
+  bool _isInitialized = false;
 
   @override
   void initState() {
     super.initState();
-    _loadStations();
+    _initAll();
   }
 
-  Future<void> _loadStations() async {
-    final list = await _db.getStationsForPalace(widget.palace.id);
-    if (mounted) {
-      setState(() {
-        _stations = list;
-        _isLoading = false;
-      });
-    }
-  }
-
-  void _onControllerReady(VideoPlayerController ctrl) {
-    _controller = ctrl;
-    _controller!.addListener(() {
-      if (mounted && _controller!.value.isInitialized) {
-        setState(() {
-          _isPlaying = _controller!.value.isPlaying;
-          final duration = _controller!.value.duration.inMilliseconds;
-          if (duration > 0) {
-            _sliderValue =
-                _controller!.value.position.inMilliseconds / duration;
-          }
-        });
-      }
+  Future<void> _initAll() async {
+    _stations = await _db.getStations(widget.palace.id);
+    _controller = VideoPlayerController.file(File(widget.palace.videoPath));
+    await _controller.initialize();
+    _controller.addListener(() {
+      if (mounted) setState(() {});
     });
+    if (mounted) setState(() => _isInitialized = true);
   }
 
-  void _togglePlayPause() {
-    if (_controller == null || !_controller!.value.isInitialized) return;
-    setState(() {
-      if (_controller!.value.isPlaying) {
-        _controller!.pause();
-      } else {
-        _controller!.play();
-      }
-    });
+  Future<void> _reloadStations() async {
+    final list = await _db.getStations(widget.palace.id);
+    setState(() => _stations = list);
   }
 
-  void _seekToPercent(double percent) {
-    if (_controller == null || !_controller!.value.isInitialized) return;
-    final targetMs =
-        (_controller!.value.duration.inMilliseconds * percent).round();
-    _controller!.seekTo(Duration(milliseconds: targetMs));
-  }
+  Future<void> _onTapVideo(double xRatio, double yRatio) async {
+    await _controller.pause();
+    final currentMs = _controller.value.position.inMilliseconds;
 
-  Future<void> _addNewStation(
-      double xRatio, double yRatio, int timestampMs) async {
-    // إيقاف الفيديو أثناء الإضافة
-    _controller?.pause();
-
-    final Station? created = await showDialog<Station>(
+    if (!mounted) return;
+    final newStation = await showDialog<Station>(
       context: context,
       builder: (_) => AddStationDialog(
         palaceId: widget.palace.id,
-        timestampMs: timestampMs,
+        timestampMs: currentMs,
         xRatio: xRatio,
         yRatio: yRatio,
       ),
     );
 
-    if (created != null) {
-      await _db.insertStation(created);
-      await _loadStations();
+    if (newStation != null) {
+      await _db.insertStation(newStation);
+      await _reloadStations();
     }
   }
 
-  void _seekToStation(Station s) {
-    if (_controller == null || !_controller!.value.isInitialized) return;
-    _controller!.seekTo(Duration(milliseconds: s.timestampMs));
-    _controller!.pause();
+  String _formatTime(int ms) {
+    final totalSeconds = ms ~/ 1000;
+    final minutes = (totalSeconds ~/ 60).toString().padLeft(2, '0');
+    final seconds = (totalSeconds % 60).toString().padLeft(2, '0');
+    final tenths = ((ms % 1000) ~/ 100).toString();
+    return '$minutes:$seconds.$tenths';
   }
 
-  Future<void> _deleteStation(Station s) async {
-    await _db.deleteStation(s.id);
-    await _loadStations();
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(widget.palace.name),
-          backgroundColor: Colors.indigo,
-          foregroundColor: Colors.white,
-          actions: [
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                child: Text(
-                  '${_stations.length} محطة',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-            ),
-          ],
-        ),
-        body: Column(
-          children: [
-            // مساحة إرشادية للمستخدم
-            Container(
-              color: Colors.amber.shade100,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: const Row(
-                children: [
-                  Icon(Icons.touch_app, color: Colors.amber, size: 20),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'أوقف الفيديو عند اللحظة المطلوبة، ثم انقر في أي مكان على الفيديو لتثبيت محطة!',
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // مشغل الفيديو التفاعلي
-            VideoOverlayWidget(
-              videoPath: widget.palace.videoPath,
-              stations: _stations,
-              isEditMode: true,
-              onControllerReady: _onControllerReady,
-              onAddPoint: _addNewStation,
-              onStationTap: _seekToStation,
-            ),
-
-            // شريط التحكم بالفيديو الدقيق
-            Container(
-              color: Colors.grey.shade900,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: Icon(
-                      _isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
-                      color: Colors.white,
-                      size: 32,
-                    ),
-                    onPressed: _togglePlayPause,
-                  ),
-                  Expanded(
-                    child: Slider(
-                      value: _sliderValue.clamp(0.0, 1.0),
-                      activeColor: Colors.indigoAccent,
-                      inactiveColor: Colors.white24,
-                      onChanged: (val) {
-                        setState(() => _sliderValue = val);
-                        _seekToPercent(val);
-                      },
-                    ),
-                  ),
-                  if (_controller != null && _controller!.value.isInitialized)
-                    Text(
-                      '${(_controller!.value.position.inSeconds)} ث',
-                      style: const TextStyle(color: Colors.white, fontSize: 13),
-                    ),
-                ],
-              ),
-            ),
-
-            // قائمة المحطات المضافة في هذا القصر
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: Text(
-                  'المحطات المحفوظة في هذا القصر:',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-              ),
-            ),
-            Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _stations.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'لم تتم إضافة أي محطات بعد.\nانقر على شاشة الفيديو أعلاه لإضافة أول محطة.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.black54),
-                          ),
-                        )
-                      : ListView.separated(
-                          padding: const EdgeInsets.all(12),
-                          itemCount: _stations.length,
-                          separatorBuilder: (_, __) =>
-                              const Divider(height: 1),
-                          itemBuilder: (context, idx) {
-                            final station = _stations[idx];
-                            final timeSec =
-                                (station.timestampMs / 1000).toStringAsFixed(1);
-                            return ListTile(
-                              leading: CircleAvatar(
-                                backgroundColor: Color(station.colorValue),
-                                child: const Icon(Icons.pin_drop,
-                                    color: Colors.white, size: 20),
-                              ),
-                              title: Text(
-                                station.title,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold),
-                              ),
-                              subtitle: Text(
-                                'الوقت: $timeSec ثانية | ${station.note}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(Icons.remove_red_eye,
-                                        color: Colors.indigo),
-                                    tooltip: 'انتقال لهذه اللحظة',
-                                    onPressed: () => _seekToStation(station),
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.delete,
-                                        color: Colors.redAccent),
-                                    onPressed: () => _deleteStation(station),
-                                  ),
-                                ],
-                              ),
-                              onTap: () => _seekToStation(station),
-                            );
-                          },
-                        ),
-            ),
-          ],
-        ),
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.palace.name),
       ),
+      body: !_isInitialized
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                VideoOverlay(
+                  controller: _controller,
+                  stations: _stations,
+                  onTap: _onTapVideo,
+                ),
+                _buildControls(),
+                const Divider(height: 1),
+                Expanded(child: _buildStationList()),
+              ],
+            ),
+    );
+  }
+
+  Widget _buildControls() {
+    final position = _controller.value.position.inMilliseconds;
+    final duration = _controller.value.duration.inMilliseconds;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              IconButton(
+                icon: Icon(
+                  _controller.value.isPlaying
+                      ? Icons.pause
+                      : Icons.play_arrow,
+                ),
+                onPressed: () {
+                  setState(() {
+                    _controller.value.isPlaying
+                        ? _controller.pause()
+                        : _controller.play();
+                  });
+                },
+              ),
+              Expanded(
+                child: Slider(
+                  value: duration > 0 ? (position / duration).clamp(0.0, 1.0) : 0.0,
+                  onChanged: (val) {
+                    _controller.seekTo(Duration(milliseconds: (val * duration).toInt()));
+                  },
+                ),
+              ),
+              Text(
+                '${_formatTime(position)} / ${_formatTime(duration)}',
+                style: const TextStyle(fontFamily: 'monospace'),
+              ),
+            ],
+          ),
+          const Text(
+            'أوقف الفيديو عند المعلم وانقر على الفيديو لإضافة محطة',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStationList() {
+    if (_stations.isEmpty) {
+      return const Center(child: Text('لم تضف أي محطة بعد. انقر على الفيديو.'));
+    }
+
+    return ListView.builder(
+      itemCount: _stations.length,
+      itemBuilder: (context, index) {
+        final s = _stations[index];
+        return ListTile(
+          leading: CircleAvatar(
+            backgroundColor: Color(s.colorValue),
+            radius: 12,
+          ),
+          title: Text(s.title),
+          subtitle: Text('${_formatTime(s.timestampMs)} - ${s.note}'),
+          trailing: IconButton(
+            icon: const Icon(Icons.delete_outline),
+            onPressed: () async {
+              await _db.deleteStation(s.id);
+              await _reloadStations();
+            },
+          ),
+          onTap: () {
+            _controller.seekTo(Duration(milliseconds: s.timestampMs));
+          },
+        );
+      },
     );
   }
 }

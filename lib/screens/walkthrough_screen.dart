@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
@@ -9,80 +10,61 @@ import '../widgets/video_overlay.dart';
 class WalkthroughScreen extends StatefulWidget {
   final Palace palace;
 
-  const WalkthroughScreen({Key? key, required this.palace}) : super(key: key);
+  const WalkthroughScreen({super.key, required this.palace});
 
   @override
   State<WalkthroughScreen> createState() => _WalkthroughScreenState();
 }
 
 class _WalkthroughScreenState extends State<WalkthroughScreen> {
-  final DatabaseService _db = DatabaseService();
+  final DatabaseService _db = DatabaseService.instance;
+  late VideoPlayerController _controller;
   List<Station> _stations = [];
-  VideoPlayerController? _controller;
-  bool _isLoading = true;
-
-  Station? _currentActiveStation;
-  bool _isAnswerRevealed = false;
-  int _lastPausedStationIndex = -1;
+  bool _isInitialized = false;
+  Station? _pausedAtStation;
+  bool _isRevealed = false;
+  String? _lastPausedStationId;
 
   @override
   void initState() {
     super.initState();
-    _loadStations();
+    _initAll();
   }
 
-  Future<void> _loadStations() async {
-    final list = await _db.getStationsForPalace(widget.palace.id);
-    if (mounted) {
-      setState(() {
-        _stations = list;
-        _isLoading = false;
-      });
-    }
+  Future<void> _initAll() async {
+    _stations = await _db.getStations(widget.palace.id);
+    _controller = VideoPlayerController.file(File(widget.palace.videoPath));
+    await _controller.initialize();
+    _controller.addListener(_videoListener);
+    await _controller.play();
+    if (mounted) setState(() => _isInitialized = true);
   }
 
-  void _onControllerReady(VideoPlayerController ctrl) {
-    _controller = ctrl;
-    _controller!.play();
+  void _videoListener() {
+    if (!_controller.value.isPlaying || _stations.isEmpty) return;
 
-    // مراقبة الفيديو للتوقف التلقائي (Auto-Pause) عند المحطة
-    _controller!.addListener(_checkStationArrival);
-  }
-
-  void _checkStationArrival() {
-    if (_controller == null || !_controller!.value.isInitialized) return;
-    if (_stations.isEmpty) return;
-
-    final currentMs = _controller!.value.position.inMilliseconds;
-
-    for (int i = 0; i < _stations.length; i++) {
-      final s = _stations[i];
-      final diff = (s.timestampMs - currentMs).abs();
-
-      // إذا وصلنا للمحطة ولم نكن قد توقفنا عندها للتو
-      if (diff <= 400 && _lastPausedStationIndex != i) {
-        _controller!.pause();
+    final currentMs = _controller.value.position.inMilliseconds;
+    for (final s in _stations) {
+      if ((currentMs - s.timestampMs).abs() <= 400 &&
+          _lastPausedStationId != s.id) {
+        _controller.pause();
+        _lastPausedStationId = s.id;
         setState(() {
-          _lastPausedStationIndex = i;
-          _currentActiveStation = s;
-          _isAnswerRevealed = false;
+          _pausedAtStation = s;
+          _isRevealed = false;
         });
         break;
       }
     }
   }
 
-  void _resumeToNextStation() {
-    if (_controller == null) return;
-    setState(() {
-      _currentActiveStation = null;
-      _isAnswerRevealed = false;
-    });
-
-    // تحريك طفيف للأمام حتى لا يقف في نفس المحطة فوراً
-    final currentPos = _controller!.value.position;
-    _controller!.seekTo(currentPos + const Duration(milliseconds: 500));
-    _controller!.play();
+  Future<void> _continuePlayback() async {
+    if (_pausedAtStation != null) {
+      final target = _pausedAtStation!.timestampMs + 500;
+      await _controller.seekTo(Duration(milliseconds: target));
+    }
+    setState(() => _pausedAtStation = null);
+    await _controller.play();
   }
 
   Future<void> _openLink(String url) async {
@@ -93,100 +75,50 @@ class _WalkthroughScreenState extends State<WalkthroughScreen> {
   }
 
   @override
+  void dispose() {
+    _controller.removeListener(_videoListener);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text('جولة: ${widget.palace.name}'),
-          backgroundColor: Colors.indigo,
-          foregroundColor: Colors.white,
-        ),
-        body: _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : Column(
-                children: [
-                  // مشغل الفيديو
-                  VideoOverlayWidget(
-                    videoPath: widget.palace.videoPath,
-                    stations: _stations,
-                    isEditMode: false,
-                    onControllerReady: _onControllerReady,
-                    onStationTap: (s) {
-                      setState(() {
-                        _currentActiveStation = s;
-                        _isAnswerRevealed = true;
-                      });
-                    },
-                  ),
-
-                  // لوحة الاستذكار التفاعلي (Active Recall Panel)
-                  Expanded(
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      color: Colors.grey.shade100,
-                      child: _stations.isEmpty
-                          ? const Center(
-                              child: Text(
-                                'لا توجد محطات في هذا القصر بعد.\nيمكنك إضافة محطات عبر شاشة التعديل.',
-                                textAlign: TextAlign.center,
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.palace.name)),
+      body: !_isInitialized
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                VideoOverlay(
+                  controller: _controller,
+                  stations: _stations,
+                  highlightedStationId: _pausedAtStation?.id,
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: _pausedAtStation == null
+                        ? Center(
+                            child: Text(
+                              'جولة الاستذكار جارية...\nسيتوقف الفيديو تلقائياً عند كل محطة.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Colors.grey[700],
+                                fontSize: 16,
                               ),
-                            )
-                          : _currentActiveStation == null
-                              ? _buildWalkingState()
-                              : _buildStationCard(_currentActiveStation!),
-                    ),
+                            ),
+                          )
+                        : _buildActiveRecallCard(_pausedAtStation!),
                   ),
-                ],
-              ),
-      ),
+                ),
+              ],
+            ),
     );
   }
 
-  Widget _buildWalkingState() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const Icon(Icons.directions_walk_rounded,
-            size: 54, color: Colors.indigo),
-        const SizedBox(height: 12),
-        const Text(
-          'أنت تسير الآن داخل قصر الذاكرة...',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 6),
-        const Text(
-          'سيتوقف الفيديو تلقائياً فور الوصول للمحطة القادمة لاختبار ذاكرتك.',
-          style: TextStyle(fontSize: 13, color: Colors.black54),
-        ),
-        const SizedBox(height: 20),
-        ElevatedButton.icon(
-          icon: const Icon(Icons.skip_next),
-          label: const Text('انتقال مباشر للمحطة القادمة'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.indigo,
-            foregroundColor: Colors.white,
-          ),
-          onPressed: () {
-            // البحث عن المحطة القادمة
-            final currentMs =
-                _controller?.value.position.inMilliseconds ?? 0;
-            final next = _stations.firstWhere(
-              (s) => s.timestampMs > currentMs + 200,
-              orElse: () => _stations.first,
-            );
-            _controller?.seekTo(Duration(milliseconds: next.timestampMs));
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildStationCard(Station station) {
+  Widget _buildActiveRecallCard(Station station) {
     return Card(
       elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -197,55 +129,34 @@ class _WalkthroughScreenState extends State<WalkthroughScreen> {
               children: [
                 CircleAvatar(
                   backgroundColor: Color(station.colorValue),
-                  child: const Icon(Icons.location_on, color: Colors.white),
+                  radius: 12,
                 ),
-                const SizedBox(width: 12),
-                const Expanded(
-                  child: Text(
-                    'توقف! اختبر ذاكرتك المكانية:',
-                    style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.indigo),
-                  ),
+                const SizedBox(width: 8),
+                const Text(
+                  'اختبار استذكار',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
               ],
             ),
             const SizedBox(height: 16),
-            if (!_isAnswerRevealed) ...[
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.amber.shade50,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.amber.shade200),
-                ),
-                child: const Text(
-                  'هل تتذكر ما هي المعلومة أو الرمز المرتبط بهذا الموضع من الفيديو؟',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                ),
-              ),
-              const SizedBox(height: 20),
-              ElevatedButton.icon(
+            const Text(
+              'ما هي المعلومة المربوطة بهذا الموضع؟',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 20),
+            if (!_isRevealed)
+              FilledButton.icon(
                 icon: const Icon(Icons.visibility),
-                label: const Text('كشف المعلومة (تأكيد الحفظ)'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.indigo,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-                onPressed: () {
-                  setState(() => _isAnswerRevealed = true);
-                },
-              ),
-            ] else ...[
+                label: const Text('كشف الإجابة'),
+                onPressed: () => setState(() => _isRevealed = true),
+              )
+            else ...[
               Container(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.green.shade50,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.green.shade200),
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(8),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -253,38 +164,25 @@ class _WalkthroughScreenState extends State<WalkthroughScreen> {
                     Text(
                       station.title,
                       style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.green),
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     if (station.note.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        station.note,
-                        style: const TextStyle(fontSize: 14, height: 1.4),
-                      ),
+                      const SizedBox(height: 6),
+                      Text(station.note),
                     ],
                     if (station.linkUrl != null &&
                         station.linkUrl!.isNotEmpty) ...[
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 8),
                       InkWell(
                         onTap: () => _openLink(station.linkUrl!),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.link,
-                                size: 18, color: Colors.blue),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: Text(
-                                station.linkUrl!,
-                                style: const TextStyle(
-                                    color: Colors.blue,
-                                    decoration: TextDecoration.underline),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
+                        child: Text(
+                          station.linkUrl!,
+                          style: const TextStyle(
+                            color: Colors.blue,
+                            decoration: TextDecoration.underline,
+                          ),
                         ),
                       ),
                     ],
@@ -292,15 +190,10 @@ class _WalkthroughScreenState extends State<WalkthroughScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              ElevatedButton.icon(
+              FilledButton.icon(
                 icon: const Icon(Icons.arrow_forward),
-                label: const Text('متابعة السير للمحطة التالية'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green.shade700,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-                onPressed: _resumeToNextStation,
+                label: const Text('المحطة التالية'),
+                onPressed: _continuePlayback,
               ),
             ],
           ],

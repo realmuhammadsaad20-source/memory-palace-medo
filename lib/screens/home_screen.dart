@@ -109,7 +109,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // حل مشكلة اختفاء الفيديو: نسخه للمجلد الداخلي الخاص بالتطبيق
     final appDir = await getApplicationDocumentsDirectory();
-    final videoId = const Uuid().v4();
+    final videoId = Uuid().v4();
     final targetPath = '${appDir.path}/palace_video_$videoId.mp4';
     final savedVideo = await File(video.path).copy(targetPath);
 

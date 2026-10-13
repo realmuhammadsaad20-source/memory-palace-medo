@@ -159,7 +159,7 @@ class _AddStationDialogState extends State<AddStationDialog> {
               }
 
               final station = Station(
-                id: widget.initialStation?.id ?? const Uuid().v4(),
+                id: widget.initialStation?.id ?? Uuid().v4(),
                 palaceId: widget.palaceId,
                 title: _titleController.text.trim(),
                 note: _noteController.text.trim(),
